@@ -1,0 +1,75 @@
+ <!DOCTYPE html>
+  <html lang="en">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <title>Talk & Translate — Live Video Call</title>
+  <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+  
+  <!-- ===================== SETUP SCREEN ===================== -->
+  <section id="setupScreen" class="screen">
+    <div class="setup-card">
+      <h1>Talk &amp; Translate</h1>
+      <p class="subtitle">A private 1-to-1 video call with live translated chat &amp; captions.</p>
+      
+      <label for="langSelect">Your language</label>
+      <select id="langSelect"></select>
+      <p class="hint">Used for what you type, what you speak, and what you'll read/hear translated into.</p>
+      
+      <div class="setup-actions">
+        <button id="createRoomBtn" class="btn primary">Create a room</button>
+        <div class="divider">or</div>
+        <input id="joinCodeInput" type="text" placeholder="Enter room code" maxlength="6" autocapitalize="characters" autocomplete="off">
+        <button id="joinRoomBtn" class="btn secondary">Join room</button>
+      </div>
+      
+      <div id="roomInfo" class="room-info hidden">
+        <p>Share this code (or link) with the other person:</p>
+        <div class="room-code" id="roomCodeDisplay"></div>
+        <button id="copyLinkBtn" class="btn small">Copy link</button>
+        <p class="waiting">Waiting for them to join…</p>
+      </div>
+      
+      <p id="setupError" class="error hidden"></p>
+    </div>
+  </section>
+  
+  <!-- ===================== CALL SCREEN ===================== -->
+  <section id="callScreen" class="screen hidden">
+    <video id="remoteVideo" playsinline autoplay class="remote-video"></video>
+    <video id="localVideo" playsinline autoplay muted class="local-video"></video>
+    
+    <div id="tapToPlay" class="tap-to-play hidden">
+      <button id="tapToPlayBtn" class="btn primary">Tap to start audio/video</button>
+    </div>
+    
+    <!-- caption bar -->
+    <div id="captionBar" class="caption-bar hidden"></div>
+    
+    <!-- chat overlay (transparent, floats over video) -->
+    <div id="chatOverlay" class="chat-overlay">
+      <div id="chatMessages" class="chat-messages"></div>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" type="text" placeholder="Type a message…" autocomplete="off">
+        <button type="submit" class="btn small">Send</button>
+      </form>
+    </div>
+    
+    <!-- controls -->
+    <div class="controls">
+      <button id="micBtn" class="ctrl-btn" title="Mute/unmute mic">🎤</button>
+      <button id="camBtn" class="ctrl-btn" title="Camera on/off">📷</button>
+      <button id="captionsBtn" class="ctrl-btn" title="Toggle live captions">💬</button>
+      <button id="hangupBtn" class="ctrl-btn danger" title="Hang up">📞</button>
+    </div>
+    
+    <div id="callStatus" class="call-status"></div>
+  </section>
+  
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="languages.js"></script>
+  <script src="app.js"></script>
+  </body>
+  </html>
