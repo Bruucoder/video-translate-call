@@ -58,6 +58,7 @@
   let callEnded = false;
   let micOn = true;
   let camOn = true;
+  let userUnlockedMedia = false;
   const translateCache = new Map();
 
   // ---------- Populate language select ----------
@@ -210,25 +211,63 @@
   }
 
   function playLocalVideo() {
-    const playPromise = localVideo.play();
-    if (playPromise && playPromise.catch) playPromise.catch(() => {});
+    safePlayVideo(localVideo, 'local video').catch(() => {});
   }
 
-  function attachRemoteStream(stream) {
-    remoteVideo.srcObject = stream;
-    const playPromise = remoteVideo.play();
-    if (playPromise && playPromise.catch) {
-      playPromise.catch((err) => {
-        log('remote autoplay blocked', err && err.message ? err.message : err);
-        tapToPlay.classList.remove('hidden');
-      });
+  async function safePlayVideo(video, label) {
+    if (!video || !video.srcObject) return true;
+
+    try {
+      const playPromise = video.play();
+      if (playPromise && playPromise.then) await playPromise;
+      log(`${label} playback started`);
+      return true;
+    } catch (err) {
+      log(`${label} playback blocked`, err && err.message ? err.message : err);
+      return false;
     }
   }
 
-  tapToPlayBtn.addEventListener('click', () => {
-    Promise.allSettled([remoteVideo.play(), localVideo.play()]).finally(() => {
+  function remoteHasTracks() {
+    return remoteStream && remoteStream.getTracks().length > 0;
+  }
+
+  async function playRemoteVideo() {
+    if (!remoteHasTracks()) return true;
+    const played = await safePlayVideo(remoteVideo, 'remote video');
+    if (played) {
       tapToPlay.classList.add('hidden');
-    });
+    } else {
+      tapToPlay.classList.remove('hidden');
+      setStatus('Tap to enable audio/video');
+    }
+    return played;
+  }
+
+  function attachRemoteStream(stream, shouldPlay = false) {
+    if (remoteVideo.srcObject !== stream) remoteVideo.srcObject = stream;
+    if (shouldPlay) playRemoteVideo();
+  }
+
+  async function unlockMediaFromTap(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    userUnlockedMedia = true;
+    setStatus('Starting audio/video...');
+    await safePlayVideo(localVideo, 'local video');
+    const remotePlayed = await playRemoteVideo();
+    if (remotePlayed) setStatus(dataChannel && dataChannel.readyState === 'open' ? 'Connected' : 'Connecting chat...');
+  }
+
+  tapToPlayBtn.addEventListener('click', unlockMediaFromTap);
+  tapToPlayBtn.addEventListener('touchend', unlockMediaFromTap, { passive: false });
+  tapToPlayBtn.addEventListener('pointerup', unlockMediaFromTap);
+
+  tapToPlay.addEventListener('click', (event) => {
+    if (event.target === tapToPlay) unlockMediaFromTap(event);
   });
 
   function createPeerConnection(role) {
@@ -237,7 +276,7 @@
 
     pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     remoteStream = new MediaStream();
-    attachRemoteStream(remoteStream);
+    remoteVideo.srcObject = remoteStream;
 
     if (localStream) {
       localStream.getTracks().forEach((track) => {
@@ -256,7 +295,8 @@
           remoteStream.addTrack(track);
         }
       });
-      attachRemoteStream(remoteStream);
+      attachRemoteStream(remoteStream, true);
+      if (userUnlockedMedia) playRemoteVideo();
       if (callScreen.classList.contains('hidden')) {
         goToCallScreen('Remote media connected');
       } else {
