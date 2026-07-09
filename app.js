@@ -4,6 +4,8 @@
   // ---------- ICE servers: Google STUN + free public OpenRelay TURN (no signup) ----------
   const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
@@ -59,6 +61,9 @@
   let micOn = true;
   let camOn = true;
   let userUnlockedMedia = false;
+  let localCandidateCount = 0;
+  let remoteCandidateCount = 0;
+  let connectionWatchdog = null;
   const translateCache = new Map();
 
   // ---------- Populate language select ----------
@@ -180,7 +185,11 @@
   }
 
   function addDbListener(ref, eventName, handler) {
-    ref.on(eventName, handler);
+    const cancelHandler = (err) => {
+      log(`Firebase listener failed for ${ref.toString()}`, err);
+      setStatus('Firebase signaling permission error');
+    };
+    ref.on(eventName, handler, cancelHandler);
     unsubscribeFns.push(() => ref.off(eventName, handler));
   }
 
@@ -189,6 +198,37 @@
       try { unsubscribe(); } catch (e) {}
     });
     unsubscribeFns = [];
+  }
+
+  function startConnectionWatchdog(label) {
+    clearTimeout(connectionWatchdog);
+    connectionWatchdog = setTimeout(() => {
+      if (!pc || callEnded) return;
+      const connected = pc.connectionState === 'connected'
+        || pc.iceConnectionState === 'connected'
+        || pc.iceConnectionState === 'completed';
+      if (connected) return;
+
+      log(`${label} still connecting`, {
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        localCandidates: localCandidateCount,
+        remoteCandidates: remoteCandidateCount,
+      });
+
+      if (!remoteCandidateCount) {
+        setStatus('Still connecting: no remote ICE candidates received');
+      } else if (!localCandidateCount) {
+        setStatus('Still connecting: no local ICE candidates sent');
+      } else {
+        setStatus('Still connecting. Try Wi-Fi or a different network.');
+      }
+    }, 15000);
+  }
+
+  function stopConnectionWatchdog() {
+    clearTimeout(connectionWatchdog);
+    connectionWatchdog = null;
   }
 
   async function getMedia() {
@@ -274,7 +314,11 @@
     setStatus('Creating WebRTC connection...');
     log(`creating RTCPeerConnection as ${role}`);
 
-    pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    });
     remoteStream = new MediaStream();
     remoteVideo.srcObject = remoteStream;
 
@@ -313,10 +357,20 @@
       const path = role === 'host' ? 'hostCandidates' : 'joinerCandidates';
       try {
         await roomRef.child(path).push(event.candidate.toJSON());
+        localCandidateCount += 1;
         log(`sent ${path} ICE candidate`);
       } catch (err) {
         log('failed to send ICE candidate', err);
+        setStatus('Could not send ICE candidate');
       }
+    };
+
+    pc.onicecandidateerror = (event) => {
+      log('ICE candidate error', {
+        url: event.url,
+        errorCode: event.errorCode,
+        errorText: event.errorText,
+      });
     };
 
     pc.onicegatheringstatechange = () => {
@@ -326,14 +380,20 @@
     pc.oniceconnectionstatechange = () => {
       log('ICE connection state: ' + pc.iceConnectionState);
       if (pc.iceConnectionState === 'checking') setStatus('Connecting media...');
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') setStatus('Connected');
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        stopConnectionWatchdog();
+        setStatus('Connected');
+      }
       if (pc.iceConnectionState === 'failed') setStatus('Media connection failed. Try a new room.');
       if (pc.iceConnectionState === 'disconnected') setStatus('Connection interrupted...');
     };
 
     pc.onconnectionstatechange = () => {
       log('Peer connection state: ' + pc.connectionState);
-      if (pc.connectionState === 'connected') setStatus('Connected');
+      if (pc.connectionState === 'connected') {
+        stopConnectionWatchdog();
+        setStatus('Connected');
+      }
       if (pc.connectionState === 'failed') setStatus('Connection failed');
       if (pc.connectionState === 'closed' && !callEnded) setStatus('Call ended');
     };
@@ -357,9 +417,11 @@
 
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidateData));
+      remoteCandidateCount += 1;
       log('added remote ICE candidate');
     } catch (err) {
       log('failed to add remote ICE candidate', err);
+      setStatus('Could not add remote ICE candidate');
     }
   }
 
@@ -574,6 +636,7 @@
     callEnded = true;
     log('hanging up', reason);
 
+    stopConnectionWatchdog();
     if (notifyPeer) sendData({ type: 'hangup', lang: myLang });
     stopRecognition();
     clearDbListeners();
@@ -624,6 +687,8 @@
     isHost = true;
     callEnded = false;
     pendingRemoteCandidates = [];
+    localCandidateCount = 0;
+    remoteCandidateCount = 0;
 
     try {
       initFirebase();
@@ -639,6 +704,7 @@
       createPeerConnection('host');
       dataChannel = pc.createDataChannel('translated-chat', { ordered: true });
       setupDataChannel(dataChannel);
+      listenForRemoteCandidates('joinerCandidates');
 
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
@@ -659,17 +725,17 @@
 
         try {
           setStatus('Answer received. Connecting...');
+          if (callScreen.classList.contains('hidden')) goToCallScreen('Answer received. Connecting...');
           peerLang = answer.lang || peerLang;
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
           log('answer applied');
           await flushRemoteCandidates();
+          startConnectionWatchdog('host');
         } catch (err) {
           log('failed to apply answer', err);
           setStatus('Could not connect answer');
         }
       });
-
-      listenForRemoteCandidates('joinerCandidates');
     } catch (err) {
       showError(err.message || 'Could not create room.');
       hangUp('Call setup failed', { notifyPeer: false, redirect: false });
@@ -682,6 +748,8 @@
     callEnded = false;
     roomCode = normalizeCode(code);
     pendingRemoteCandidates = [];
+    localCandidateCount = 0;
+    remoteCandidateCount = 0;
 
     if (!roomCode) {
       showError('Enter a room code.');
@@ -711,6 +779,7 @@
 
       goToCallScreen('Joining room...');
       createPeerConnection('joiner');
+      listenForRemoteCandidates('hostCandidates');
 
       peerLang = room.offer.lang || room.hostLang || peerLang;
       setStatus('Offer received. Creating answer...');
@@ -727,8 +796,7 @@
       });
       setStatus('Answer sent. Connecting...');
       log('answer published');
-
-      listenForRemoteCandidates('hostCandidates');
+      startConnectionWatchdog('joiner');
     } catch (err) {
       showError(err.message || 'Could not join room.');
       hangUp('Call setup failed', { notifyPeer: false, redirect: false });
@@ -769,9 +837,9 @@
     }
   });
 
-  window.addEventListener('pagehide', () => {
-    if (!callEnded && (pc || roomRef)) {
-      hangUp('Call ended', { notifyPeer: true, redirect: false });
+  window.addEventListener('beforeunload', () => {
+    if (!callEnded && dataChannel && dataChannel.readyState === 'open') {
+      sendData({ type: 'hangup', lang: myLang });
     }
   });
 
