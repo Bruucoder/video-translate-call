@@ -64,6 +64,9 @@
   let localCandidateCount = 0;
   let remoteCandidateCount = 0;
   let connectionWatchdog = null;
+  let iceRestartAttempts = 0;
+  let lastOfferSdp = null;
+  let lastAnswerSdp = null;
   const translateCache = new Map();
 
   // ---------- Populate language select ----------
@@ -231,6 +234,36 @@
     connectionWatchdog = null;
   }
 
+  function connectionFailureMessage() {
+    if (!remoteCandidateCount) return 'Connection failed: no remote ICE candidates';
+    if (!localCandidateCount) return 'Connection failed: no local ICE candidates';
+    return `Connection failed: ICE blocked (${localCandidateCount}/${remoteCandidateCount})`;
+  }
+
+  async function restartIceIfPossible() {
+    if (!pc || !roomRef || callEnded || !isHost || iceRestartAttempts >= 1) return;
+    iceRestartAttempts += 1;
+
+    try {
+      setStatus('Connection failed. Retrying...');
+      log('starting ICE restart');
+      if (pc.restartIce) pc.restartIce();
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      await roomRef.child('offer').set({
+        type: offer.type,
+        sdp: offer.sdp,
+        lang: myLang,
+        restart: iceRestartAttempts,
+      });
+      startConnectionWatchdog('host ICE restart');
+      log('ICE restart offer published');
+    } catch (err) {
+      log('ICE restart failed', err);
+      setStatus(connectionFailureMessage());
+    }
+  }
+
   async function getMedia() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Camera/mic access is not supported in this browser.');
@@ -384,7 +417,10 @@
         stopConnectionWatchdog();
         setStatus('Connected');
       }
-      if (pc.iceConnectionState === 'failed') setStatus('Media connection failed. Try a new room.');
+      if (pc.iceConnectionState === 'failed') {
+        setStatus(connectionFailureMessage());
+        restartIceIfPossible();
+      }
       if (pc.iceConnectionState === 'disconnected') setStatus('Connection interrupted...');
     };
 
@@ -394,7 +430,10 @@
         stopConnectionWatchdog();
         setStatus('Connected');
       }
-      if (pc.connectionState === 'failed') setStatus('Connection failed');
+      if (pc.connectionState === 'failed') {
+        setStatus(connectionFailureMessage());
+        restartIceIfPossible();
+      }
       if (pc.connectionState === 'closed' && !callEnded) setStatus('Call ended');
     };
 
@@ -435,6 +474,37 @@
   function listenForRemoteCandidates(path) {
     addDbListener(roomRef.child(path), 'child_added', (snapshot) => {
       addRemoteCandidate(snapshot.val());
+    });
+  }
+
+  function listenForOfferUpdates() {
+    addDbListener(roomRef.child('offer'), 'value', async (snapshot) => {
+      const offer = snapshot.val();
+      if (!offer || !pc || offer.sdp === lastOfferSdp) return;
+
+      try {
+        lastOfferSdp = offer.sdp;
+        setStatus(offer.restart ? 'Retry offer received...' : 'Offer received...');
+        peerLang = offer.lang || peerLang;
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        log(offer.restart ? 'restart offer applied' : 'offer applied');
+        await flushRemoteCandidates();
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await roomRef.child('answer').set({
+          type: answer.type,
+          sdp: answer.sdp,
+          lang: myLang,
+          restart: offer.restart || 0,
+        });
+        setStatus(offer.restart ? 'Retry answer sent. Connecting...' : 'Answer sent. Connecting...');
+        log(offer.restart ? 'restart answer published' : 'answer published');
+        startConnectionWatchdog('joiner');
+      } catch (err) {
+        log('failed to handle offer', err);
+        setStatus('Could not process offer');
+      }
     });
   }
 
@@ -689,6 +759,9 @@
     pendingRemoteCandidates = [];
     localCandidateCount = 0;
     remoteCandidateCount = 0;
+    iceRestartAttempts = 0;
+    lastOfferSdp = null;
+    lastAnswerSdp = null;
 
     try {
       initFirebase();
@@ -721,14 +794,15 @@
 
       addDbListener(roomRef.child('answer'), 'value', async (snapshot) => {
         const answer = snapshot.val();
-        if (!answer || !pc || pc.remoteDescription) return;
+        if (!answer || !pc || answer.sdp === lastAnswerSdp) return;
 
         try {
-          setStatus('Answer received. Connecting...');
+          lastAnswerSdp = answer.sdp;
+          setStatus(answer.restart ? 'Retry answer received. Connecting...' : 'Answer received. Connecting...');
           if (callScreen.classList.contains('hidden')) goToCallScreen('Answer received. Connecting...');
           peerLang = answer.lang || peerLang;
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          log('answer applied');
+          log(answer.restart ? 'restart answer applied' : 'answer applied');
           await flushRemoteCandidates();
           startConnectionWatchdog('host');
         } catch (err) {
@@ -750,6 +824,9 @@
     pendingRemoteCandidates = [];
     localCandidateCount = 0;
     remoteCandidateCount = 0;
+    iceRestartAttempts = 0;
+    lastOfferSdp = null;
+    lastAnswerSdp = null;
 
     if (!roomCode) {
       showError('Enter a room code.');
@@ -780,23 +857,7 @@
       goToCallScreen('Joining room...');
       createPeerConnection('joiner');
       listenForRemoteCandidates('hostCandidates');
-
-      peerLang = room.offer.lang || room.hostLang || peerLang;
-      setStatus('Offer received. Creating answer...');
-      await pc.setRemoteDescription(new RTCSessionDescription(room.offer));
-      log('offer applied');
-      await flushRemoteCandidates();
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await roomRef.child('answer').set({
-        type: answer.type,
-        sdp: answer.sdp,
-        lang: myLang,
-      });
-      setStatus('Answer sent. Connecting...');
-      log('answer published');
-      startConnectionWatchdog('joiner');
+      listenForOfferUpdates();
     } catch (err) {
       showError(err.message || 'Could not join room.');
       hangUp('Call setup failed', { notifyPeer: false, redirect: false });
