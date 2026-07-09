@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  // ---------- ICE servers: Google STUN + free public OpenRelay TURN (no signup) ----------
-  const ICE_SERVERS = [
+  // ---------- ICE servers: STUN + optional project TURN config ----------
+  const DEFAULT_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
@@ -140,6 +140,13 @@
     localVideo.muted = true;
   }
   configureVideoElements();
+
+  function iceServers() {
+    const extraServers = Array.isArray(window.EXTRA_ICE_SERVERS) ? window.EXTRA_ICE_SERVERS : [];
+    const servers = [...DEFAULT_ICE_SERVERS, ...extraServers];
+    log('ICE servers configured', servers.map((server) => server.urls));
+    return servers;
+  }
 
   function firebaseConfig() {
     return window.firebaseConfig || window.FIREBASE_CONFIG || null;
@@ -348,7 +355,7 @@
     log(`creating RTCPeerConnection as ${role}`);
 
     pc = new RTCPeerConnection({
-      iceServers: ICE_SERVERS,
+      iceServers: iceServers(),
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
     });
