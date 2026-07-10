@@ -14,6 +14,21 @@ window.EXTRA_ICE_SERVERS = [
     credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
   },
   {
+    urls: 'turn:free.expressturn.com:80?transport=tcp',
+    username: '000000002099033874',
+    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+  },
+  {
+    urls: 'turn:free.expressturn.com:443?transport=tcp',
+    username: '000000002099033874',
+    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+  },
+  {
+    urls: 'turns:free.expressturn.com:443?transport=tcp',
+    username: '000000002099033874',
+    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+  },
+  {
     urls: 'stun:free.expressturn.com:3478',
   },
 ];
