@@ -1,14 +1,11 @@
 (() => {
   'use strict';
 
-  // ---------- ICE servers: STUN + optional project TURN config ----------
+  // ---------- ICE servers: public STUN + optional project TURN config ----------
   const DEFAULT_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
 
   const ROOM_TTL_MS = 1000 * 60 * 30; // invite links stay valid while the host is open, with stale cleanup after 30 minutes
@@ -177,6 +174,10 @@
     return servers;
   }
 
+  function forceTurnRelay() {
+    return window.FORCE_TURN_RELAY === true;
+  }
+
   function firebaseConfig() {
     return window.firebaseConfig || window.FIREBASE_CONFIG || null;
   }
@@ -276,6 +277,7 @@
     if (!localRelayCandidateCount || !remoteRelayCandidateCount) {
       return `Connection failed: TURN relay not available (${localRelayCandidateCount}/${remoteRelayCandidateCount})`;
     }
+    if (forceTurnRelay()) return 'Connection failed: ExpressTURN relay could not connect';
     return `Connection failed: ICE blocked (${localCandidateCount}/${remoteCandidateCount})`;
   }
 
@@ -393,10 +395,14 @@
 
   function createPeerConnection(role) {
     setStatus('Creating WebRTC connection...');
-    log(`creating RTCPeerConnection as ${role}`);
+    const relayOnly = forceTurnRelay();
+    log(`creating RTCPeerConnection as ${role}`, {
+      iceTransportPolicy: relayOnly ? 'relay' : 'all',
+    });
 
     pc = new RTCPeerConnection({
       iceServers: iceServers(),
+      iceTransportPolicy: relayOnly ? 'relay' : 'all',
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
     });
@@ -440,7 +446,7 @@
         const candidateJson = event.candidate.toJSON();
         const type = candidateType(candidateJson);
         if (type === 'relay') localRelayCandidateCount += 1;
-        log(`local ICE candidate (${type})`);
+        log(`local ICE candidate (${type})`, { url: event.candidate.url || 'unavailable' });
         await roomRef.child(path).push(candidateJson);
         localCandidateCount += 1;
         log(`sent ${path} ICE candidate`);
