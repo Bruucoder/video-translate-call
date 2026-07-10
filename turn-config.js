@@ -1,6 +1,6 @@
 // ExpressTURN config.
 // Paste your ExpressTURN username and credential into every TURN entry below.
-// Relay-only mode confirms whether ExpressTURN can carry the call across networks.
+// Route calls through ExpressTURN for consistent cross-network connectivity.
 window.FORCE_TURN_RELAY = true;
 window.EXTRA_ICE_SERVERS = [
   {
