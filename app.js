@@ -11,7 +11,7 @@
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
 
-  const ROOM_TTL_MS = 1000 * 60 * 60 * 8;
+  const ROOM_TTL_MS = 1000 * 60 * 30; // invite links stay valid while the host is open, with stale cleanup after 30 minutes
 
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -36,6 +36,10 @@
   const chatInput = $('chatInput');
   const micBtn = $('micBtn');
   const camBtn = $('camBtn');
+  const cameraMenu = $('cameraMenu');
+  const cameraOffBtn = $('cameraOffBtn');
+  const frontCameraBtn = $('frontCameraBtn');
+  const backCameraBtn = $('backCameraBtn');
   const captionsBtn = $('captionsBtn');
   const hangupBtn = $('hangupBtn');
   const callStatus = $('callStatus');
@@ -60,6 +64,8 @@
   let callEnded = false;
   let micOn = true;
   let camOn = true;
+  let currentFacingMode = 'user';
+  let cameraSwitching = false;
   let userUnlockedMedia = false;
   let localCandidateCount = 0;
   let remoteCandidateCount = 0;
@@ -140,6 +146,27 @@
     localVideo.muted = true;
   }
   configureVideoElements();
+
+  function videoConstraints(facingMode = currentFacingMode) {
+    return {
+      facingMode: { ideal: facingMode },
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+    };
+  }
+
+  function updateCameraUi() {
+    localVideo.classList.toggle('selfie-preview', currentFacingMode === 'user');
+    camBtn.classList.toggle('off', !camOn);
+    if (cameraOffBtn) cameraOffBtn.classList.toggle('active', !camOn);
+    if (frontCameraBtn) frontCameraBtn.classList.toggle('active', camOn && currentFacingMode === 'user');
+    if (backCameraBtn) backCameraBtn.classList.toggle('active', camOn && currentFacingMode === 'environment');
+  }
+
+  function showCameraMenu(show) {
+    cameraMenu.classList.toggle('hidden', !show);
+    updateCameraUi();
+  }
 
   function iceServers() {
     const extraServers = Array.isArray(window.EXTRA_ICE_SERVERS) ? window.EXTRA_ICE_SERVERS : [];
@@ -279,10 +306,11 @@
     setStatus('Requesting camera and microphone...');
     log('requesting local media');
     localStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: videoConstraints(),
       audio: { echoCancellation: true, noiseSuppression: true },
     });
     localVideo.srcObject = localStream;
+    updateCameraUi();
     playLocalVideo();
     log('local media ready', {
       audioTracks: localStream.getAudioTracks().length,
@@ -622,6 +650,14 @@
     }
   });
 
+  callScreen.addEventListener('click', (event) => {
+    if (callScreen.classList.contains('hidden')) return;
+    if (event.target.closest('.chat-overlay, .controls, .camera-menu, .local-video, .tap-to-play')) return;
+
+    showCameraMenu(false);
+    callScreen.classList.toggle('chat-hidden');
+  });
+
   // ---------- Captions UI ----------
   let captionTimeout = null;
   function showCaption(text) {
@@ -697,12 +733,87 @@
     setStatus(micOn ? 'Microphone on' : 'Microphone muted');
   });
 
-  camBtn.addEventListener('click', () => {
-    camOn = !camOn;
+  async function setCameraEnabled(enabled) {
+    camOn = enabled;
     const tracks = localStream ? localStream.getVideoTracks() : [];
-    tracks.forEach((t) => (t.enabled = camOn));
-    camBtn.classList.toggle('off', !camOn);
-    setStatus(camOn ? 'Camera on' : 'Camera off');
+    tracks.forEach((t) => (t.enabled = enabled));
+    updateCameraUi();
+    setStatus(enabled ? 'Camera on' : 'Camera off');
+  }
+
+  async function switchCamera(facingMode) {
+    if (cameraSwitching) return;
+    cameraSwitching = true;
+    showCameraMenu(false);
+    setStatus(facingMode === 'environment' ? 'Switching to back camera...' : 'Switching to front camera...');
+
+    const previousFacingMode = currentFacingMode;
+    const oldVideoTracks = localStream ? localStream.getVideoTracks() : [];
+    oldVideoTracks.forEach((track) => {
+      try { track.stop(); } catch (e) {}
+      if (localStream) localStream.removeTrack(track);
+    });
+
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(facingMode),
+        audio: false,
+      });
+      const [newTrack] = videoStream.getVideoTracks();
+      if (!newTrack) throw new Error('No video track returned');
+
+      currentFacingMode = facingMode;
+      camOn = true;
+      localStream.addTrack(newTrack);
+      localVideo.srcObject = localStream;
+
+      const sender = pc && pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (sender) await sender.replaceTrack(newTrack);
+
+      updateCameraUi();
+      playLocalVideo();
+      setStatus(facingMode === 'environment' ? 'Back camera on' : 'Front camera on');
+    } catch (err) {
+      log('camera switch failed', err);
+      currentFacingMode = previousFacingMode;
+      setStatus('Could not switch camera');
+      try {
+        const recoveryStream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints(previousFacingMode),
+          audio: false,
+        });
+        const [recoveryTrack] = recoveryStream.getVideoTracks();
+        if (recoveryTrack && localStream) {
+          localStream.addTrack(recoveryTrack);
+          localVideo.srcObject = localStream;
+          const sender = pc && pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+          if (sender) await sender.replaceTrack(recoveryTrack);
+        }
+      } catch (recoveryErr) {
+        log('camera recovery failed', recoveryErr);
+      }
+      updateCameraUi();
+    } finally {
+      cameraSwitching = false;
+    }
+  }
+
+  camBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    showCameraMenu(cameraMenu.classList.contains('hidden'));
+  });
+  cameraOffBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    showCameraMenu(false);
+    setCameraEnabled(false);
+  });
+  frontCameraBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    switchCamera('user');
+  });
+  backCameraBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    switchCamera('environment');
   });
 
   hangupBtn.addEventListener('click', () => hangUp('You ended the call'));
@@ -879,7 +990,7 @@
   });
 
   joinRoomBtn.addEventListener('click', () => {
-    const code = normalizeCode(joinCodeInput.value);
+    const code = normalizeCode(joinCodeInput.value || roomCode);
     if (!code) { showError('Enter a room code.'); return; }
     createRoomBtn.disabled = true;
     joinRoomBtn.disabled = true;
@@ -909,12 +1020,20 @@
     if (!callEnded && dataChannel && dataChannel.readyState === 'open') {
       sendData({ type: 'hangup', lang: myLang });
     }
+    if (isHost && roomRef) {
+      try { roomRef.remove(); } catch (e) {}
+    }
   });
 
   // Prefill room code from a shared link (?room=CODE)
   (function prefillFromLink() {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
-    if (room) joinCodeInput.value = normalizeCode(room);
+    if (room) {
+      roomCode = normalizeCode(room);
+      joinCodeInput.value = roomCode;
+      setupScreen.classList.add('invite-mode');
+      joinRoomBtn.textContent = 'Join call';
+    }
   })();
 })();

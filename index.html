@@ -60,9 +60,15 @@
   <!-- controls -->
   <div class="controls">
     <button id="micBtn" class="ctrl-btn" title="Mute/unmute mic">🎤</button>
-    <button id="camBtn" class="ctrl-btn" title="Camera on/off">📷</button>
+    <button id="camBtn" class="ctrl-btn" title="Camera options">📷</button>
     <button id="captionsBtn" class="ctrl-btn" title="Toggle live captions">💬</button>
     <button id="hangupBtn" class="ctrl-btn danger" title="Hang up">📞</button>
+  </div>
+
+  <div id="cameraMenu" class="camera-menu hidden">
+    <button id="cameraOffBtn" type="button">Camera off</button>
+    <button id="frontCameraBtn" type="button">Front camera</button>
+    <button id="backCameraBtn" type="button">Back camera</button>
   </div>
 
   <div id="callStatus" class="call-status"></div>
