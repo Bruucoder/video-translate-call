@@ -615,6 +615,7 @@
       log('data channel open');
       setStatus('Connected');
       sendData({ type: 'hello', lang: myLang });
+      sendData({ type: 'captions-control', enabled: captionsOn, lang: myLang });
     };
     dataChannel.onmessage = async (event) => {
       let msg;
@@ -634,8 +635,20 @@
         const translated = await translateText(msg.text, msg.lang, myLang);
         renderChatBubble(translated, msg.text, false);
       } else if (msg.type === 'caption') {
-        const translated = await translateText(msg.text, msg.lang, myLang);
-        showCaption(translated);
+        if (captionsOn) {
+          const translated = await translateText(msg.text, msg.lang, myLang);
+          showCaption(translated);
+        }
+      } else if (msg.type === 'captions-control') {
+        captionsWanted = Boolean(msg.enabled);
+        if (captionsWanted) {
+          setStatus('Other participant enabled captions');
+          startRecognition();
+        } else {
+          stopRecognition();
+        }
+      } else if (msg.type === 'captions-error') {
+        if (captionsOn) setStatus(msg.message || 'Captions unavailable on the other device');
       } else if (msg.type === 'hangup') {
         hangUp('Call ended by other side', { notifyPeer: false, redirect: true });
       }
@@ -693,46 +706,77 @@
   }
 
   function startRecognition() {
+    if (recognition || !captionsWanted) return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      setStatus('Live captions not supported in this browser');
+      captionsWanted = false;
+      setStatus('Live captions are not supported on this device');
+      sendData({
+        type: 'captions-error',
+        message: 'Captions are not supported on the other device/browser',
+        lang: myLang,
+      });
       return;
     }
-    recognition = new SR();
-    recognition.lang = mySpeechLang;
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.onresult = (event) => {
+
+    const activeRecognition = new SR();
+    recognition = activeRecognition;
+    activeRecognition.lang = mySpeechLang;
+    activeRecognition.continuous = true;
+    activeRecognition.interimResults = false;
+    activeRecognition.onstart = () => {
+      log('speech recognition listening', mySpeechLang);
+    };
+    activeRecognition.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           const text = event.results[i][0].transcript.trim();
-          if (text) sendData({ type: 'caption', text, lang: myLang });
+          if (text) {
+            log('caption recognized', text);
+            sendData({ type: 'caption', text, lang: myLang });
+          }
         }
       }
     };
-    recognition.onerror = (err) => {
-      log('speech recognition error', err);
+    activeRecognition.onerror = (event) => {
+      log('speech recognition error', event.error || event);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        captionsWanted = false;
+        setStatus('Speech recognition permission was denied');
+        sendData({
+          type: 'captions-error',
+          message: 'Speech recognition permission was denied on the other device',
+          lang: myLang,
+        });
+      }
     };
-    recognition.onend = () => {
+    activeRecognition.onend = () => {
+      if (recognition === activeRecognition) recognition = null;
       if (captionsWanted) {
         setTimeout(() => {
           if (captionsWanted) startRecognition();
-        }, 500);
+        }, 700);
       }
     };
     try {
-      recognition.start();
-      setStatus('Captions listening...');
-    } catch (e) {
-      log('speech recognition start ignored', e);
+      activeRecognition.start();
+    } catch (err) {
+      if (recognition === activeRecognition) recognition = null;
+      log('speech recognition could not start', err);
+      setStatus('Could not start speech recognition');
+      sendData({
+        type: 'captions-error',
+        message: 'Could not start captions on the other device',
+        lang: myLang,
+      });
     }
   }
 
   function stopRecognition() {
-    captionsWanted = false;
-    if (recognition) {
-      try { recognition.stop(); } catch (e) {}
-      recognition = null;
+    const activeRecognition = recognition;
+    recognition = null;
+    if (activeRecognition) {
+      try { activeRecognition.stop(); } catch (e) {}
     }
   }
 
@@ -740,10 +784,12 @@
     captionsOn = !captionsOn;
     captionsBtn.classList.toggle('active', captionsOn);
     if (captionsOn) {
-      captionsWanted = true;
-      startRecognition();
+      captionBar.classList.add('hidden');
+      if (sendData({ type: 'captions-control', enabled: true, lang: myLang })) {
+        setStatus('Captions on. Waiting for speech...');
+      }
     } else {
-      stopRecognition();
+      sendData({ type: 'captions-control', enabled: false, lang: myLang });
       captionBar.classList.add('hidden');
       setStatus('Captions off');
     }
@@ -851,6 +897,7 @@
 
     stopConnectionWatchdog();
     if (notifyPeer) sendData({ type: 'hangup', lang: myLang });
+    captionsWanted = false;
     stopRecognition();
     clearDbListeners();
 

@@ -1,5 +1,4 @@
 // ExpressTURN config.
-// Paste your ExpressTURN username and credential into every TURN entry below.
 // Route calls through ExpressTURN for consistent cross-network connectivity.
 window.FORCE_TURN_RELAY = true;
 window.EXTRA_ICE_SERVERS = [
