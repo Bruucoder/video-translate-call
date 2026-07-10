@@ -69,6 +69,8 @@
   let userUnlockedMedia = false;
   let localCandidateCount = 0;
   let remoteCandidateCount = 0;
+  let localRelayCandidateCount = 0;
+  let remoteRelayCandidateCount = 0;
   let connectionWatchdog = null;
   let iceRestartAttempts = 0;
   let lastOfferSdp = null;
@@ -271,7 +273,18 @@
   function connectionFailureMessage() {
     if (!remoteCandidateCount) return 'Connection failed: no remote ICE candidates';
     if (!localCandidateCount) return 'Connection failed: no local ICE candidates';
+    if (!localRelayCandidateCount || !remoteRelayCandidateCount) {
+      return `Connection failed: TURN relay not available (${localRelayCandidateCount}/${remoteRelayCandidateCount})`;
+    }
     return `Connection failed: ICE blocked (${localCandidateCount}/${remoteCandidateCount})`;
+  }
+
+  function candidateType(candidateData) {
+    const candidate = typeof candidateData === 'string'
+      ? candidateData
+      : candidateData && candidateData.candidate;
+    const match = candidate && candidate.match(/ typ ([a-z0-9]+)/i);
+    return match ? match[1].toLowerCase() : 'unknown';
   }
 
   async function restartIceIfPossible() {
@@ -424,7 +437,11 @@
 
       const path = role === 'host' ? 'hostCandidates' : 'joinerCandidates';
       try {
-        await roomRef.child(path).push(event.candidate.toJSON());
+        const candidateJson = event.candidate.toJSON();
+        const type = candidateType(candidateJson);
+        if (type === 'relay') localRelayCandidateCount += 1;
+        log(`local ICE candidate (${type})`);
+        await roomRef.child(path).push(candidateJson);
         localCandidateCount += 1;
         log(`sent ${path} ICE candidate`);
       } catch (err) {
@@ -490,9 +507,11 @@
     }
 
     try {
+      const type = candidateType(candidateData);
       await pc.addIceCandidate(new RTCIceCandidate(candidateData));
       remoteCandidateCount += 1;
-      log('added remote ICE candidate');
+      if (type === 'relay') remoteRelayCandidateCount += 1;
+      log(`added remote ICE candidate (${type})`);
     } catch (err) {
       log('failed to add remote ICE candidate', err);
       setStatus('Could not add remote ICE candidate');
@@ -877,6 +896,8 @@
     pendingRemoteCandidates = [];
     localCandidateCount = 0;
     remoteCandidateCount = 0;
+    localRelayCandidateCount = 0;
+    remoteRelayCandidateCount = 0;
     iceRestartAttempts = 0;
     lastOfferSdp = null;
     lastAnswerSdp = null;
@@ -942,6 +963,8 @@
     pendingRemoteCandidates = [];
     localCandidateCount = 0;
     remoteCandidateCount = 0;
+    localRelayCandidateCount = 0;
+    remoteRelayCandidateCount = 0;
     iceRestartAttempts = 0;
     lastOfferSdp = null;
     lastAnswerSdp = null;
