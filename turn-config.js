@@ -4,31 +4,36 @@
 window.FORCE_TURN_RELAY = true;
 window.EXTRA_ICE_SERVERS = [
   {
-    urls: 'turn:free.expressturn.com:3478',
-    username: '000000002099033874',
-    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+    urls: 'turn:global.expressturn.com:3478',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
   },
   {
-    urls: 'turn:free.expressturn.com:3478?transport=tcp',
-    username: '000000002099033874',
-    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+    urls: 'turn:global.expressturn.com:3478?transport=tcp',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
   },
   {
-    urls: 'turn:free.expressturn.com:80?transport=tcp',
-    username: '000000002099033874',
-    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+    urls: 'turn:relay1.expressturn.com:80?transport=tcp',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
   },
   {
-    urls: 'turn:free.expressturn.com:443?transport=tcp',
-    username: '000000002099033874',
-    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+    urls: 'turn:relay1.expressturn.com:443?transport=tcp',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
   },
   {
-    urls: 'turns:free.expressturn.com:443?transport=tcp',
-    username: '000000002099033874',
-    credential: 'WX2WpPP/P5UME4RXwzPTvu5hjpQ=',
+    urls: 'turns:relay1.expressturn.com:443?transport=tcp',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
   },
   {
-    urls: 'stun:free.expressturn.com:3478',
+    urls: 'turn:relay2.expressturn.com:3478',
+    username: '000000002099035391',
+    credential: 'amKEQZxwjkIpCnEuYDiKyLPLd9I=',
+  },
+  {
+    urls: 'stun:global.expressturn.com:3478',
   },
 ];
