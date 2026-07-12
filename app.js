@@ -22,6 +22,8 @@
   const roomCodeDisplay = $('roomCodeDisplay');
   const copyLinkBtn = $('copyLinkBtn');
   const setupError = $('setupError');
+  const permissionHelp = $('permissionHelp');
+  const copyCurrentLinkBtn = $('copyCurrentLinkBtn');
 
   const remoteVideo = $('remoteVideo');
   const localVideo = $('localVideo');
@@ -100,10 +102,11 @@
     }
   }
 
-  function showError(msg) {
+  function showError(msg, options = {}) {
     log('error', msg);
     setupError.textContent = msg;
     setupError.classList.remove('hidden');
+    permissionHelp.classList.toggle('hidden', !options.showPermissionHelp);
     createRoomBtn.disabled = false;
     joinRoomBtn.disabled = false;
   }
@@ -111,6 +114,40 @@
   function clearError() {
     setupError.classList.add('hidden');
     setupError.textContent = '';
+    permissionHelp.classList.add('hidden');
+  }
+
+  function isEmbeddedContext() {
+    try {
+      return window.self !== window.top;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function isLikelyInAppBrowser() {
+    const ua = navigator.userAgent || '';
+    return /FBAN|FBAV|Instagram|Line\/|MicroMessenger|; wv\)|\bwv\b|Snapchat|TikTok|WhatsApp|Discord/i.test(ua);
+  }
+
+  function mediaAccessMessage(error) {
+    const name = error && error.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      if (isEmbeddedContext() || isLikelyInAppBrowser()) {
+        return 'Camera and microphone are blocked inside this app browser. Copy the link and open it directly in Safari or Chrome.';
+      }
+      return 'Camera or microphone permission is blocked. Allow access in your browser settings, then tap Join call again.';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return 'No camera or microphone was found on this device.';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return 'The camera or microphone is being used by another app. Close it, then tap Join call again.';
+    }
+    if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+      return 'This device could not provide a compatible camera. Try another browser or device.';
+    }
+    return 'Could not access the camera and microphone. Open this link in Safari or Chrome and allow permission.';
   }
 
   function genCode() {
@@ -315,15 +352,29 @@
 
   async function getMedia() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error('Camera/mic access is not supported in this browser.');
+      const unsupported = new Error('Camera and microphone access is not available in this browser. Open the link directly in Safari or Chrome.');
+      unsupported.name = 'MediaAccessError';
+      throw unsupported;
     }
 
     setStatus('Requesting camera and microphone...');
     log('requesting local media');
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: videoConstraints(),
-      audio: { echoCancellation: true, noiseSuppression: true },
-    });
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints(),
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (error) {
+      log('local media request failed', {
+        name: error && error.name,
+        message: error && error.message,
+        embedded: isEmbeddedContext(),
+        inAppBrowser: isLikelyInAppBrowser(),
+      });
+      const mediaError = new Error(mediaAccessMessage(error));
+      mediaError.name = 'MediaAccessError';
+      throw mediaError;
+    }
     localVideo.srcObject = localStream;
     updateCameraUi();
     playLocalVideo();
@@ -1003,7 +1054,9 @@
         }
       });
     } catch (err) {
-      showError(err.message || 'Could not create room.');
+      showError(err.message || 'Could not create room.', {
+        showPermissionHelp: err.name === 'MediaAccessError',
+      });
       hangUp('Call setup failed', { notifyPeer: false, redirect: false });
     }
   }
@@ -1053,7 +1106,9 @@
       listenForRemoteCandidates('hostCandidates');
       listenForOfferUpdates();
     } catch (err) {
-      showError(err.message || 'Could not join room.');
+      showError(err.message || 'Could not join room.', {
+        showPermissionHelp: err.name === 'MediaAccessError',
+      });
       hangUp('Call setup failed', { notifyPeer: false, redirect: false });
     }
   }
@@ -1075,6 +1130,23 @@
 
   joinCodeInput.addEventListener('input', () => {
     joinCodeInput.value = normalizeCode(joinCodeInput.value);
+  });
+
+  copyCurrentLinkBtn.addEventListener('click', () => {
+    const link = window.location.href;
+    const markCopied = () => {
+      copyCurrentLinkBtn.textContent = 'Copied!';
+      setTimeout(() => (copyCurrentLinkBtn.textContent = 'Copy link'), 1500);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(markCopied).catch(() => {
+        window.prompt('Copy this link and open it in Safari or Chrome:', link);
+      });
+    } else {
+      window.prompt('Copy this link and open it in Safari or Chrome:', link);
+      markCopied();
+    }
   });
 
   copyLinkBtn.addEventListener('click', () => {

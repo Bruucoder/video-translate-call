@@ -59,6 +59,21 @@ select, input[type="text"] {
 }
 .waiting { color: #9aa4b2; font-size: 13px; margin-top: 10px; }
 .error { color: #ff6b6b; font-size: 13px; margin-top: 14px; text-align: center; }
+.permission-help {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #3a4255;
+  border-radius: 8px;
+  background: #0f1218;
+  text-align: center;
+}
+.permission-help p {
+  margin: 0 0 10px;
+  color: #c9d1dc;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.permission-help .btn { margin: 0; }
 
 /* ---------- Call screen ---------- */
 #callScreen { position: relative; overflow: hidden; background: #000; }
